@@ -350,7 +350,11 @@ fn cascade_expands_tilde_in_key_path() {
         .assert()
         .success();
 
-    let home = std::env::var("HOME").unwrap();
+    // Mirror src/verbs.rs::expand_home — HOME on POSIX, USERPROFILE on
+    // Windows. The Windows runner does not set HOME.
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .expect("HOME or USERPROFILE must be set");
     let assert_out = cmd(root.path(), priv_dir.path())
         .args(["cascade", "env"])
         .assert()
