@@ -271,7 +271,9 @@ fn materialize(layout: &Layout) -> Materialized {
             heads.insert(branch.clone(), git_capture(&work, &["rev-parse", branch]));
         }
 
-        let url = format!("file://{}", bare.display());
+        // Forward-slash form so file:// URLs round-trip on Windows.
+        // See the matching comment in tests/e2e.rs make_remote_named.
+        let url = format!("file://{}", bare.display().to_string().replace('\\', "/"));
         repos.insert(spec.name.clone(), MatRepo { url, heads });
     }
     Materialized { repos, _dir: dir }

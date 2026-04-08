@@ -49,7 +49,13 @@ fn make_remote_named(name: &str) -> (TempDir, String) {
     git(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
     git(&work, &["push", "origin", "main"]);
 
-    let url = format!("file://{}", bare.display());
+    // file:// URLs are conventionally posix-style even on Windows.
+    // Path::display() emits backslashes on Windows, which aren't valid
+    // URL chars and which git rejects in URLs — convert to forward
+    // slashes for cross-platform test stability. The result on Windows
+    // is `file://C:/Users/.../upstream.git`, which both git and the
+    // xen URL parser accept.
+    let url = format!("file://{}", bare.display().to_string().replace('\\', "/"));
     (dir, url)
 }
 

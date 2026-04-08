@@ -270,7 +270,13 @@ fn portal_list(paths: &EnvPaths) -> Result<()> {
 }
 
 fn derive_repo_name(url: &str) -> Result<RepoName> {
-    let last = url.rsplit('/').next().unwrap_or(url);
+    // Accept both '/' and '\' as path separators so file:// URLs and
+    // bare local paths work on Windows. Real Windows users may type
+    // either `xen portal add C:\path\to\repo.git` or
+    // `xen portal add file://C:\path\to\repo.git`; without backslash
+    // handling we'd treat the whole drive-rooted path as the repo
+    // name and reject it as invalid.
+    let last = url.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(url);
     let stem = last.trim_end_matches(".git");
     if stem.is_empty() {
         bail!("portal: cannot derive repo name from url {url:?}");
