@@ -80,9 +80,15 @@ impl EnvPaths {
 }
 
 fn home() -> Result<PathBuf> {
+    // HOME is the POSIX standard. USERPROFILE is the Windows equivalent
+    // and is what Rust's own tooling (cargo, rustup) consults when HOME
+    // is unset. We accept either, in that order, so xen behaves the
+    // same on linux/macos and Windows without dragging in the `dirs`
+    // crate for one lookup.
     std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("HOME not set"))
+        .ok_or_else(|| anyhow::anyhow!("neither HOME nor USERPROFILE is set"))
 }
 
 // --- on-disk types --------------------------------------------------------

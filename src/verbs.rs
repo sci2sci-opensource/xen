@@ -113,13 +113,14 @@ fn build_auth_env(p: &PrivateRepo) -> Vec<(String, String)> {
     env
 }
 
-/// Expand a leading `~/` against `$HOME`. Tilde expansion otherwise
-/// happens in unquoted shell context, which is exactly what
-/// `shell_single_quote` strips, so we have to do it ourselves before
-/// quoting.
+/// Expand a leading `~/` against the user's home directory. Tilde
+/// expansion otherwise happens in unquoted shell context, which is
+/// exactly what `shell_single_quote` strips, so we have to do it
+/// ourselves before quoting. Tries `HOME` first (POSIX), falls back
+/// to `USERPROFILE` (Windows) so the same auth path works on both.
 fn expand_home(p: &str) -> String {
     if let Some(rest) = p.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
+        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
             return format!("{}/{rest}", home.to_string_lossy());
         }
     }
