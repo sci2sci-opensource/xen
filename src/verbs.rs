@@ -276,7 +276,7 @@ fn derive_repo_name(url: &str) -> Result<RepoName> {
     // `xen portal add file://C:\path\to\repo.git`; without backslash
     // handling we'd treat the whole drive-rooted path as the repo
     // name and reject it as invalid.
-    let last = url.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(url);
+    let last = url.rsplit(['/', '\\']).next().unwrap_or(url);
     let stem = last.trim_end_matches(".git");
     if stem.is_empty() {
         bail!("portal: cannot derive repo name from url {url:?}");
