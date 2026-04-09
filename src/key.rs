@@ -115,6 +115,49 @@ impl RuleField {
     }
 }
 
+/// A workspace-level hook name. Same character constraints as
+/// `RepoName` and `RuleName` so the dotted-path keyspace stays uniform.
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct HookName(String);
+
+impl HookName {
+    pub fn new(s: impl Into<String>) -> Result<Self, KeyError> {
+        let s = s.into();
+        if s.is_empty() || s.chars().any(|c| c == '.' || c == '/' || c.is_whitespace()) {
+            return Err(KeyError::InvalidHookName(s));
+        }
+        Ok(Self(s))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for HookName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// One field on a hook. Adding a new hook field is a single variant
+/// here plus a match arm in `apply_hook`.
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum HookField {
+    Match,
+    Exec,
+    When,
+}
+
+impl HookField {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Match => "match",
+            Self::Exec => "exec",
+            Self::When => "when",
+        }
+    }
+}
+
 /// Auth field. Each variant is a thing the spec calls out by name.
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub enum AuthField {
@@ -153,9 +196,10 @@ impl Layer {
 
 /// Keys that live in the **shared** layer (`.xen/`, committed to git).
 ///
-/// Two on-disk files back this enum: per-repo variants live in
-/// `.xen/repos.toml`, the `Rule` variant lives in `.xen/rules.toml`.
-/// `store::write_shared` dispatches by variant.
+/// Three on-disk files back this enum: per-repo variants live in
+/// `.xen/repos.toml`, the `Rule` variant lives in `.xen/rules.toml`,
+/// the `Hook` variant lives in `.xen/hooks.toml`. `store::write_shared`
+/// dispatches by variant.
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub enum SharedKey {
     Url(RepoName),
@@ -163,6 +207,7 @@ pub enum SharedKey {
     Branchtype(RepoName, Branchtype),
     Paths(RepoName),
     Rule(RuleName, RuleField),
+    Hook(HookName, HookField),
 }
 
 /// Keys that live in the **private** layer (`~/.xen/`, never committed).
@@ -191,6 +236,8 @@ pub enum KeyError {
     InvalidBranchtype(String),
     #[error("invalid rule name: {0:?}")]
     InvalidRuleName(String),
+    #[error("invalid hook name: {0:?}")]
+    InvalidHookName(String),
     #[error("unknown key: {0:?}")]
     Unknown(String),
     #[error("key {0:?} cannot be written to the {1} layer")]
@@ -263,6 +310,7 @@ impl Key {
             Key::Shared(SharedKey::Branchtype(r, b)) => format!("{r}.branchtypes.{b}"),
             Key::Shared(SharedKey::Paths(r)) => format!("{r}.paths"),
             Key::Shared(SharedKey::Rule(name, f)) => format!("{name}.{}", f.as_str()),
+            Key::Shared(SharedKey::Hook(name, f)) => format!("{name}.{}", f.as_str()),
             Key::Private(PrivateKey::Auth(r, f)) => format!("{r}.{}", f.as_str()),
             Key::Private(PrivateKey::AtOverride(r)) => format!("{r}.at"),
             Key::Private(PrivateKey::BranchtypeOverride(r, b)) => format!("{r}.branchtypes.{b}"),
@@ -292,6 +340,30 @@ impl Key {
             return Err(KeyError::Unknown(dotted.to_string()));
         }
         RuleName::new(dotted)
+    }
+
+    /// Parse a **hook-shaped** dotted key. Hooks live under
+    /// `xen env hooks` and never overlap with the repo or rule keyspace.
+    ///
+    /// Returns the (name, field) pair on success. The verb layer
+    /// turns it into `SharedKey::Hook(name, field)` for storage.
+    pub fn parse_hook(dotted: &str) -> Result<(HookName, HookField), KeyError> {
+        let parts: Vec<&str> = dotted.split('.').collect();
+        match parts.as_slice() {
+            [name, "match"] => Ok((HookName::new(*name)?, HookField::Match)),
+            [name, "exec"] => Ok((HookName::new(*name)?, HookField::Exec)),
+            [name, "when"] => Ok((HookName::new(*name)?, HookField::When)),
+            _ => Err(KeyError::Unknown(dotted.to_string())),
+        }
+    }
+
+    /// Parse a **bare hook name** with no field — used by
+    /// `xen env hooks unset <name>` to drop a whole hook at once.
+    pub fn parse_hook_name(dotted: &str) -> Result<HookName, KeyError> {
+        if dotted.contains('.') {
+            return Err(KeyError::Unknown(dotted.to_string()));
+        }
+        HookName::new(dotted)
     }
 
     #[allow(dead_code)] // used by tests
@@ -399,5 +471,31 @@ mod tests {
         assert!(RepoName::new("a/b").is_err());
         assert!(RepoName::new("a.b").is_err());
         assert!(RepoName::new("a b").is_err());
+    }
+
+    #[test]
+    fn hook_field_keys_parse_via_parse_hook() {
+        let (name, field) = Key::parse_hook("pull-after-sync.match").unwrap();
+        assert_eq!(name.as_str(), "pull-after-sync");
+        assert_eq!(field, HookField::Match);
+
+        for f in ["match", "exec", "when"] {
+            assert!(Key::parse_hook(&format!("foo.{f}")).is_ok());
+        }
+    }
+
+    #[test]
+    fn parse_hook_rejects_malformed() {
+        assert!(Key::parse_hook("").is_err());
+        assert!(Key::parse_hook("foo").is_err()); // no field
+        assert!(Key::parse_hook("foo.bogus").is_err());
+        assert!(Key::parse_hook("foo.match.extra").is_err());
+    }
+
+    #[test]
+    fn parse_hook_name_accepts_bare_name() {
+        assert_eq!(Key::parse_hook_name("foo").unwrap().as_str(), "foo");
+        assert!(Key::parse_hook_name("foo.match").is_err());
+        assert!(Key::parse_hook_name("").is_err());
     }
 }

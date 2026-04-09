@@ -145,6 +145,11 @@ pub enum EnvOp {
         #[command(subcommand)]
         op: RulesOp,
     },
+    /// Workspace hooks — declarative pre/post actions on xen verb invocations.
+    Hooks {
+        #[command(subcommand)]
+        op: HooksOp,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -156,5 +161,19 @@ pub enum RulesOp {
     /// Get a rule field, or all fields of a rule by bare name.
     Get { key: String },
     /// List all configured rules.
+    List,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HooksOp {
+    /// Set a hook field, e.g. `set pull-after-sync.match='^sync\b'`,
+    /// `set pull-after-sync.exec='git pull --ff-only'`,
+    /// `set pull-after-sync.when='post'`.
+    Set { assignment: String },
+    /// Unset a hook field, or a whole hook by bare name.
+    Unset { key: String },
+    /// Get a hook field, or all fields of a hook by bare name.
+    Get { key: String },
+    /// List all configured hooks.
     List,
 }
