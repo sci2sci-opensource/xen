@@ -916,6 +916,12 @@ fn resonate_does_not_touch_manifest_or_gitignore() {
 fn post_hook_fires_after_matching_verb() {
     let (root, priv_dir) = isolated();
     let marker = root.path().join(".post-hook-marker");
+    // Forward-slash form so the path round-trips through `sh -c` on
+    // Windows. `Path::display()` emits backslashes there, which bash
+    // would silently treat as escape characters and write the file
+    // to a garbage relative location. The Path-level `marker.exists()`
+    // check below still uses the original Path and resolves either form.
+    let marker_str = marker.display().to_string().replace('\\', "/");
 
     // Configure a complete hook: matches bare `xen env`, executes
     // `touch <marker>` at workspace root, fires post (default).
@@ -928,7 +934,7 @@ fn post_hook_fires_after_matching_verb() {
             "env",
             "hooks",
             "set",
-            &format!("marker.exec=touch {}", marker.display()),
+            &format!("marker.exec=touch {}", marker_str),
         ])
         .assert()
         .success();
@@ -981,6 +987,9 @@ fn pre_hook_fires_before_verb_and_can_abort() {
 fn hook_does_not_fire_when_pattern_does_not_match() {
     let (root, priv_dir) = isolated();
     let marker = root.path().join(".should-not-exist");
+    // Same forward-slash normalization as `post_hook_fires_after_matching_verb`
+    // — see that test for the rationale.
+    let marker_str = marker.display().to_string().replace('\\', "/");
 
     // Hook that matches `^sync$` only — bare `xen env` shouldn't fire it.
     cmd(root.path(), priv_dir.path())
@@ -992,7 +1001,7 @@ fn hook_does_not_fire_when_pattern_does_not_match() {
             "env",
             "hooks",
             "set",
-            &format!("h.exec=touch {}", marker.display()),
+            &format!("h.exec=touch {}", marker_str),
         ])
         .assert()
         .success();
