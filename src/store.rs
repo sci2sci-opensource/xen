@@ -29,7 +29,7 @@
 //! variant routes to rules.toml, repo variants route to repos.toml,
 //! and "auth in shared" remains unrepresentable.
 
-use crate::key::{AuthField, PrivateKey, RuleField, SharedKey};
+use crate::key::{AuthField, HookField, PrivateKey, RuleField, SharedKey};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -66,6 +66,9 @@ impl EnvPaths {
     }
     pub fn rules_file(&self) -> PathBuf {
         self.shared_dir.join("rules.toml")
+    }
+    pub fn hooks_file(&self) -> PathBuf {
+        self.shared_dir.join("hooks.toml")
     }
     pub fn private_file(&self) -> PathBuf {
         self.private_dir.join("config.toml")
@@ -146,6 +149,33 @@ impl SharedRule {
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct HooksConfig {
+    #[serde(default)]
+    pub hooks: BTreeMap<String, SharedHook>,
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct SharedHook {
+    /// `match` is a Rust keyword, so the field is renamed at the
+    /// serde boundary. The on-disk TOML key is `match`.
+    #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
+    pub match_pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exec: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+}
+
+impl SharedHook {
+    pub fn is_empty(&self) -> bool {
+        self.match_pattern.is_none() && self.exec.is_none() && self.when.is_none()
+    }
+    pub fn is_complete(&self) -> bool {
+        self.match_pattern.is_some() && self.exec.is_some()
+    }
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct PrivateConfig {
     #[serde(default)]
     pub repos: BTreeMap<String, PrivateRepo>,
@@ -198,6 +228,10 @@ pub fn load_rules(paths: &EnvPaths) -> Result<RulesConfig> {
     load(&paths.rules_file())
 }
 
+pub fn load_hooks(paths: &EnvPaths) -> Result<HooksConfig> {
+    load(&paths.hooks_file())
+}
+
 pub fn load_private(paths: &EnvPaths) -> Result<PrivateConfig> {
     load(&paths.private_file())
 }
@@ -234,6 +268,10 @@ pub fn save_rules(paths: &EnvPaths, cfg: &RulesConfig) -> Result<()> {
     save(&paths.rules_file(), cfg)
 }
 
+pub fn save_hooks(paths: &EnvPaths, cfg: &HooksConfig) -> Result<()> {
+    save(&paths.hooks_file(), cfg)
+}
+
 pub fn save_private(paths: &EnvPaths, cfg: &PrivateConfig) -> Result<()> {
     save(&paths.private_file(), cfg)
 }
@@ -246,6 +284,11 @@ pub fn write_shared(paths: &EnvPaths, key: SharedKey, value: String) -> Result<(
             let mut cfg = load_rules(paths)?;
             apply_rule(&mut cfg, name.as_str(), field, Some(value));
             save_rules(paths, &cfg)
+        }
+        SharedKey::Hook(name, field) => {
+            let mut cfg = load_hooks(paths)?;
+            apply_hook(&mut cfg, name.as_str(), field, Some(value));
+            save_hooks(paths, &cfg)
         }
         repo_key => {
             let mut cfg = load_shared(paths)?;
@@ -262,6 +305,11 @@ pub fn unset_shared(paths: &EnvPaths, key: SharedKey) -> Result<()> {
             apply_rule(&mut cfg, name.as_str(), field, None);
             save_rules(paths, &cfg)
         }
+        SharedKey::Hook(name, field) => {
+            let mut cfg = load_hooks(paths)?;
+            apply_hook(&mut cfg, name.as_str(), field, None);
+            save_hooks(paths, &cfg)
+        }
         repo_key => {
             let mut cfg = load_shared(paths)?;
             apply_shared(&mut cfg, repo_key, None);
@@ -277,6 +325,17 @@ pub fn unset_rule_by_name(paths: &EnvPaths, name: &str) -> Result<bool> {
     let removed = cfg.rules.remove(name).is_some();
     if removed {
         save_rules(paths, &cfg)?;
+    }
+    Ok(removed)
+}
+
+/// Drop a whole hook by name. Used by `xen env hooks unset <name>`
+/// when no field is given.
+pub fn unset_hook_by_name(paths: &EnvPaths, name: &str) -> Result<bool> {
+    let mut cfg = load_hooks(paths)?;
+    let removed = cfg.hooks.remove(name).is_some();
+    if removed {
+        save_hooks(paths, &cfg)?;
     }
     Ok(removed)
 }
@@ -300,6 +359,7 @@ fn apply_shared(cfg: &mut SharedConfig, key: SharedKey, value: Option<String>) {
         | SharedKey::Paths(r)
         | SharedKey::Branchtype(r, _) => r.as_str().to_string(),
         SharedKey::Rule(_, _) => unreachable!("Rule routed to apply_rule above"),
+        SharedKey::Hook(_, _) => unreachable!("Hook routed to apply_hook above"),
     };
     let entry = cfg.repos.entry(repo_name.clone()).or_default();
     match key {
@@ -315,6 +375,7 @@ fn apply_shared(cfg: &mut SharedConfig, key: SharedKey, value: Option<String>) {
             }
         },
         SharedKey::Rule(_, _) => unreachable!(),
+        SharedKey::Hook(_, _) => unreachable!(),
     }
     if entry.is_empty() {
         cfg.repos.remove(&repo_name);
@@ -330,6 +391,18 @@ fn apply_rule(cfg: &mut RulesConfig, name: &str, field: RuleField, value: Option
     }
     if entry.is_empty() {
         cfg.rules.remove(name);
+    }
+}
+
+fn apply_hook(cfg: &mut HooksConfig, name: &str, field: HookField, value: Option<String>) {
+    let entry = cfg.hooks.entry(name.to_string()).or_default();
+    match field {
+        HookField::Match => entry.match_pattern = value,
+        HookField::Exec => entry.exec = value,
+        HookField::When => entry.when = value,
+    }
+    if entry.is_empty() {
+        cfg.hooks.remove(name);
     }
 }
 

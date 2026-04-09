@@ -900,6 +900,159 @@ fn resonate_does_not_touch_manifest_or_gitignore() {
     );
 }
 
+// --- hooks ----------------------------------------------------------------
+//
+// End-to-end: configure a hook via `xen env hooks set`, then run a
+// xen verb whose joined argv matches the hook's regex, and verify the
+// hook's `exec` shell command actually fired in the workspace root.
+//
+// All these tests use `^env$` as the hook pattern — a strict match
+// for the bare `xen env` invocation only. That way the setup commands
+// (`env hooks set ...`) don't self-trigger the hook during their own
+// runs, which would otherwise create a chicken-and-egg situation
+// where setting field N+1 fires the half-defined hook from field N.
+
+#[test]
+fn post_hook_fires_after_matching_verb() {
+    let (root, priv_dir) = isolated();
+    let marker = root.path().join(".post-hook-marker");
+    // Forward-slash form so the path round-trips through `sh -c` on
+    // Windows. `Path::display()` emits backslashes there, which bash
+    // would silently treat as escape characters and write the file
+    // to a garbage relative location. The Path-level `marker.exists()`
+    // check below still uses the original Path and resolves either form.
+    let marker_str = marker.display().to_string().replace('\\', "/");
+
+    // Configure a complete hook: matches bare `xen env`, executes
+    // `touch <marker>` at workspace root, fires post (default).
+    cmd(root.path(), priv_dir.path())
+        .args(["env", "hooks", "set", "marker.match=^env$"])
+        .assert()
+        .success();
+    cmd(root.path(), priv_dir.path())
+        .args([
+            "env",
+            "hooks",
+            "set",
+            &format!("marker.exec=touch {}", marker_str),
+        ])
+        .assert()
+        .success();
+
+    assert!(!marker.exists(), "marker should not exist before trigger");
+
+    // Bare `xen env` matches `^env$` → post-hook fires → marker created.
+    cmd(root.path(), priv_dir.path())
+        .arg("env")
+        .assert()
+        .success();
+
+    assert!(
+        marker.exists(),
+        "post-hook should have created {}",
+        marker.display()
+    );
+}
+
+#[test]
+fn pre_hook_fires_before_verb_and_can_abort() {
+    let (root, priv_dir) = isolated();
+
+    // Pre-hook on `^env$` that always fails. Configure all three
+    // fields explicitly so phase = pre is set deliberately.
+    cmd(root.path(), priv_dir.path())
+        .args(["env", "hooks", "set", "blocker.match=^env$"])
+        .assert()
+        .success();
+    cmd(root.path(), priv_dir.path())
+        .args(["env", "hooks", "set", "blocker.exec=exit 7"])
+        .assert()
+        .success();
+    cmd(root.path(), priv_dir.path())
+        .args(["env", "hooks", "set", "blocker.when=pre"])
+        .assert()
+        .success();
+
+    // Bare `xen env` should fail because the pre-hook exits non-zero.
+    // The error message should mention the hook name so the user can
+    // tell where the abort came from.
+    cmd(root.path(), priv_dir.path())
+        .arg("env")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("blocker"));
+}
+
+#[test]
+fn hook_does_not_fire_when_pattern_does_not_match() {
+    let (root, priv_dir) = isolated();
+    let marker = root.path().join(".should-not-exist");
+    // Same forward-slash normalization as `post_hook_fires_after_matching_verb`
+    // — see that test for the rationale.
+    let marker_str = marker.display().to_string().replace('\\', "/");
+
+    // Hook that matches `^sync$` only — bare `xen env` shouldn't fire it.
+    cmd(root.path(), priv_dir.path())
+        .args(["env", "hooks", "set", "h.match=^sync$"])
+        .assert()
+        .success();
+    cmd(root.path(), priv_dir.path())
+        .args([
+            "env",
+            "hooks",
+            "set",
+            &format!("h.exec=touch {}", marker_str),
+        ])
+        .assert()
+        .success();
+
+    cmd(root.path(), priv_dir.path())
+        .arg("env")
+        .assert()
+        .success();
+    assert!(!marker.exists());
+}
+
+#[test]
+fn post_hook_failure_fails_the_command() {
+    let (root, priv_dir) = isolated();
+    cmd(root.path(), priv_dir.path())
+        .args(["env", "hooks", "set", "fail-after.match=^env$"])
+        .assert()
+        .success();
+    cmd(root.path(), priv_dir.path())
+        .args(["env", "hooks", "set", "fail-after.exec=exit 3"])
+        .assert()
+        .success();
+
+    // The verb itself succeeds (env prints status), but the failing
+    // post-hook surfaces as the overall non-zero exit.
+    cmd(root.path(), priv_dir.path())
+        .arg("env")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("fail-after"));
+}
+
+#[test]
+fn incomplete_hook_is_inactive_and_does_not_break_xen() {
+    // A half-defined hook (only `match` set, no `exec`) must be
+    // silently inactive — running any other xen verb must still work.
+    // This is the property that lets `xen env hooks set` configure a
+    // hook one field at a time without locking the user out.
+    let (root, priv_dir) = isolated();
+    cmd(root.path(), priv_dir.path())
+        .args(["env", "hooks", "set", "halfdone.match=^.*$"])
+        .assert()
+        .success();
+    // No `exec` set yet — hook is incomplete. Running any verb must
+    // still succeed. `xen env` is a no-state-required verb here.
+    cmd(root.path(), priv_dir.path())
+        .arg("env")
+        .assert()
+        .success();
+}
+
 // Suppress unused-warning for the helper if a future test removes it.
 #[allow(dead_code)]
 fn _force_use(_: PathBuf) {}

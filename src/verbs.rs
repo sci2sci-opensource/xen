@@ -7,10 +7,10 @@
 //! just happen to know which argv they want.
 
 use crate::cli::{
-    CascadeArgs, EnvArgs, EnvOp, PortalOp, ResonateArgs, RulesOp, SummonArgs, SyncArgs,
+    CascadeArgs, EnvArgs, EnvOp, HooksOp, PortalOp, ResonateArgs, RulesOp, SummonArgs, SyncArgs,
 };
 use crate::gitignore;
-use crate::key::{Branchtype, Key, Layer, RepoName, RuleField, SharedKey};
+use crate::key::{Branchtype, HookField, Key, Layer, RepoName, RuleField, SharedKey};
 use crate::proc;
 use crate::rules;
 use crate::store::{self, EnvPaths, PrivateConfig, PrivateRepo, RulesConfig, SharedConfig};
@@ -795,6 +795,7 @@ pub async fn env(args: EnvArgs) -> Result<()> {
             }
         }
         Some(EnvOp::Rules { op }) => env_rules(&paths, op).await?,
+        Some(EnvOp::Hooks { op }) => env_hooks(&paths, op).await?,
         None => {
             let shared = store::load_shared(&paths)?;
             let private = store::load_private(&paths)?;
@@ -890,6 +891,88 @@ async fn env_rules(paths: &EnvPaths, op: RulesOp) -> Result<()> {
                 println!("  pattern: {pat}");
                 if let Some(m) = &r.message {
                     println!("  message: {m}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn env_hooks(paths: &EnvPaths, op: HooksOp) -> Result<()> {
+    match op {
+        HooksOp::Set { assignment } => {
+            let (k, v) = assignment
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("expected key=value, got {assignment:?}"))?;
+            let (name, field) = Key::parse_hook(k)?;
+            store::write_shared(paths, SharedKey::Hook(name, field), v.to_string())?;
+            println!("hooks: set {k}");
+        }
+        HooksOp::Unset { key } => {
+            // Two shapes accepted, mirroring rules:
+            //   - "name.field"  → unset that one field
+            //   - "name"        → drop the whole hook
+            if let Ok((name, field)) = Key::parse_hook(&key) {
+                store::unset_shared(paths, SharedKey::Hook(name, field))?;
+                println!("hooks: unset {key}");
+            } else if let Ok(name) = Key::parse_hook_name(&key) {
+                let removed = store::unset_hook_by_name(paths, name.as_str())?;
+                if removed {
+                    println!("hooks: removed hook {name}");
+                } else {
+                    bail!("hooks: no hook named {name}");
+                }
+            } else {
+                bail!("hooks: invalid key {key:?}");
+            }
+        }
+        HooksOp::Get { key } => {
+            let cfg = store::load_hooks(paths)?;
+            if let Ok((name, field)) = Key::parse_hook(&key) {
+                let entry = cfg
+                    .hooks
+                    .get(name.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("hooks get: no hook named {name}"))?;
+                let value = match field {
+                    HookField::Match => entry.match_pattern.as_deref(),
+                    HookField::Exec => entry.exec.as_deref(),
+                    HookField::When => entry.when.as_deref(),
+                };
+                match value {
+                    Some(v) => println!("{v}"),
+                    None => bail!("hooks get: no value for {key}"),
+                }
+            } else if let Ok(name) = Key::parse_hook_name(&key) {
+                let entry = cfg
+                    .hooks
+                    .get(name.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("hooks get: no hook named {name}"))?;
+                if let Some(p) = &entry.match_pattern {
+                    println!("match = {p}");
+                }
+                if let Some(e) = &entry.exec {
+                    println!("exec  = {e}");
+                }
+                if let Some(w) = &entry.when {
+                    println!("when  = {w}");
+                }
+            } else {
+                bail!("hooks: invalid key {key:?}");
+            }
+        }
+        HooksOp::List => {
+            let cfg = store::load_hooks(paths)?;
+            if cfg.hooks.is_empty() {
+                println!("(no hooks configured)");
+                return Ok(());
+            }
+            for (name, h) in &cfg.hooks {
+                let pat = h.match_pattern.as_deref().unwrap_or("(unset)");
+                let when = h.when.as_deref().unwrap_or("post");
+                println!("{name} ({when})");
+                println!("  match: {pat}");
+                if let Some(e) = &h.exec {
+                    println!("  exec:  {e}");
                 }
             }
         }

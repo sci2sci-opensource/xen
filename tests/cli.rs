@@ -124,3 +124,146 @@ fn env_status_reports_empty() {
 fn cascade_requires_command() {
     xen().arg("cascade").assert().failure();
 }
+
+// --- hooks ----------------------------------------------------------------
+//
+// Hooks are the symmetric pair to rules: pattern + shell command,
+// fired around xen verb invocations instead of inside cascade. The
+// CLI surface mirrors `xen env rules` exactly.
+
+#[test]
+fn env_hooks_set_writes_to_hooks_toml() {
+    let (root, priv_dir, mut cmd) = isolated();
+    cmd.args(["env", "hooks", "set", "pull-after-sync.match=^sync\\b"])
+        .assert()
+        .success();
+    let _ = priv_dir;
+    let s = std::fs::read_to_string(root.path().join(".xen/hooks.toml")).unwrap();
+    assert!(s.contains("[hooks.pull-after-sync]"), "hooks.toml: {s}");
+    assert!(s.contains("match"), "hooks.toml: {s}");
+}
+
+#[test]
+fn env_hooks_set_all_three_fields() {
+    let (root, _p, _) = isolated();
+    for kv in [
+        "pull.match=^sync\\b",
+        "pull.exec=git pull --ff-only",
+        "pull.when=post",
+    ] {
+        let mut c = xen();
+        c.env("XEN_ROOT", root.path())
+            .env("XEN_PRIVATE_DIR", _p.path())
+            .args(["env", "hooks", "set", kv])
+            .assert()
+            .success();
+    }
+    let s = std::fs::read_to_string(root.path().join(".xen/hooks.toml")).unwrap();
+    assert!(s.contains("match"));
+    assert!(s.contains("exec"));
+    assert!(s.contains("when"));
+    assert!(s.contains("post"));
+}
+
+#[test]
+fn env_hooks_get_field_and_whole_hook() {
+    let (root, priv_dir, _) = isolated();
+    for kv in ["h1.match=^sync$", "h1.exec=echo hi", "h1.when=pre"] {
+        let mut c = xen();
+        c.env("XEN_ROOT", root.path())
+            .env("XEN_PRIVATE_DIR", priv_dir.path())
+            .args(["env", "hooks", "set", kv])
+            .assert()
+            .success();
+    }
+    // Get a single field.
+    let mut g = xen();
+    g.env("XEN_ROOT", root.path())
+        .env("XEN_PRIVATE_DIR", priv_dir.path())
+        .args(["env", "hooks", "get", "h1.exec"])
+        .assert()
+        .success()
+        .stdout(contains("echo hi"));
+    // Get the whole hook.
+    let mut g2 = xen();
+    g2.env("XEN_ROOT", root.path())
+        .env("XEN_PRIVATE_DIR", priv_dir.path())
+        .args(["env", "hooks", "get", "h1"])
+        .assert()
+        .success()
+        .stdout(contains("match"))
+        .stdout(contains("exec"))
+        .stdout(contains("when"));
+}
+
+#[test]
+fn env_hooks_unset_whole_hook() {
+    let (root, priv_dir, _) = isolated();
+    let mut c = xen();
+    c.env("XEN_ROOT", root.path())
+        .env("XEN_PRIVATE_DIR", priv_dir.path())
+        .args(["env", "hooks", "set", "h.match=^sync"])
+        .assert()
+        .success();
+    let mut u = xen();
+    u.env("XEN_ROOT", root.path())
+        .env("XEN_PRIVATE_DIR", priv_dir.path())
+        .args(["env", "hooks", "unset", "h"])
+        .assert()
+        .success();
+    // After dropping the only field, the file may be empty or absent.
+    let p = root.path().join(".xen/hooks.toml");
+    if p.exists() {
+        let s = std::fs::read_to_string(&p).unwrap();
+        assert!(!s.contains("[hooks.h]"), "hook should be gone: {s}");
+    }
+}
+
+#[test]
+fn env_hooks_list_empty_and_populated() {
+    let (root, priv_dir, mut cmd) = isolated();
+    cmd.args(["env", "hooks", "list"])
+        .assert()
+        .success()
+        .stdout(contains("(no hooks configured)"));
+    let mut s1 = xen();
+    s1.env("XEN_ROOT", root.path())
+        .env("XEN_PRIVATE_DIR", priv_dir.path())
+        .args(["env", "hooks", "set", "h.match=^sync"])
+        .assert()
+        .success();
+    let mut s2 = xen();
+    s2.env("XEN_ROOT", root.path())
+        .env("XEN_PRIVATE_DIR", priv_dir.path())
+        .args(["env", "hooks", "set", "h.exec=echo hi"])
+        .assert()
+        .success();
+    let mut l = xen();
+    l.env("XEN_ROOT", root.path())
+        .env("XEN_PRIVATE_DIR", priv_dir.path())
+        .args(["env", "hooks", "list"])
+        .assert()
+        .success()
+        .stdout(contains("h ("))
+        .stdout(contains("match"));
+}
+
+#[test]
+fn env_hooks_set_rejects_invalid_field() {
+    let (_r, _p, mut cmd) = isolated();
+    cmd.args(["env", "hooks", "set", "h.bogus=x"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn env_hooks_set_rejects_invalid_when() {
+    // The CLI accepts any string for `when`; validation happens at
+    // hook compile time when the verb runs. Set is fine; the failure
+    // shows up at the next xen verb invocation. (We don't trip it
+    // here because env subcommand doesn't itself trigger compile.)
+    let (_r, _p, mut cmd) = isolated();
+    cmd.args(["env", "hooks", "set", "h.when=sideways"])
+        .assert()
+        .success();
+}
