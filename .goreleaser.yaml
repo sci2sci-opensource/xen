@@ -1,0 +1,82 @@
+version: 2
+project_name: xen
+
+before:
+  hooks:
+    - cargo fetch --locked
+
+builds:
+  - id: xen
+    builder: rust
+    binary: xen
+    flags:
+      - --release
+      - --locked
+    targets:
+      - x86_64-unknown-linux-gnu
+      - aarch64-unknown-linux-gnu
+      - x86_64-apple-darwin
+      - aarch64-apple-darwin
+      - x86_64-pc-windows-msvc
+
+archives:
+  - id: xen
+    # install.sh expects EXACTLY this filename: `xen-${VERSION}-${target}.tar.gz`
+    # where VERSION includes the leading `v` and target is the rust triple.
+    name_template: "xen-{{ .Tag }}-{{ .Target }}"
+    # install.sh extracts and then `mv "$tmp/xen-${VERSION}-${target}/xen"`.
+    # The archive MUST contain a single directory matching name_template.
+    wrap_in_directory: true
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+nfpms:
+  - id: xen-deb
+    package_name: xen
+    file_name_template: "xen_{{ .Version }}_{{ .Arch }}"
+    formats: [deb]
+    maintainer: "Valerii Kremnev v@sci2sci.com"
+    description: |
+      Virtual-monorepo layer that materializes independent git repos
+      into one queryable workspace without collapsing their gitflows.
+    homepage: https://github.com/sci2sci-opensource/xen
+    license: Apache-2.0
+    section: devel
+    priority: optional
+    bindir: /usr/bin
+
+brews:
+  - name: xen
+    repository:
+      owner: sci2sci-opensource
+      name: homebrew-xen
+      branch: master
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/sci2sci-opensource/xen
+    description: Virtual-monorepo layer for git
+    license: Apache-2.0
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    test: |
+      assert_match "xen", shell_output("#{bin}/xen --version")
+
+checksum:
+  name_template: SHA256SUMS
+
+release:
+  github:
+    owner: sci2sci-opensource
+    name: xen
+  draft: false
+  prerelease: auto
+
+changelog:
+  use: github
+  sort: asc
