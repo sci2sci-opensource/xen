@@ -1,5 +1,5 @@
 [package]
-name = "xen"
+name = "xen-space"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
@@ -35,5 +35,3 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 opt-level = "z"
-
-# cargo-dist will populate [workspace.metadata.dist] on `dist init`.

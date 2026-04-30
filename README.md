@@ -10,13 +10,51 @@ This is the load-bearing rule. `repo`, `git-meta`, and submodules all blur the l
 
 ## Install
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/sci2sci-opensource/xen/main/install.sh | sh
+### One-liner
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sci2sci-opensource/xen/master/install.sh | sh
 ```
 
-Detects OS + arch, downloads the matching static binary from the corresponding GitHub Release, drops it in `~/.local/bin`. No prerequisites beyond `curl`, `tar`, and a POSIX shell. Override the version with `XEN_VERSION=v0.1.0 sh install.sh`, the install location with `XEN_INSTALL_DIR=...`.
+### Homebrew (macOS / Linux)
 
-A Homebrew tap pointing at the same release artifacts is planned.
+```bash
+brew install sci2sci-opensource/xen/xen
+```
+
+### Cargo
+
+```bash
+cargo install xen-space
+```
+
+### Ubuntu / Debian (.deb)
+
+```bash
+VERSION=$(curl -sSL https://api.github.com/repos/sci2sci-opensource/xen/releases/latest \
+  | grep '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
+ARCH=$(dpkg --print-architecture)
+curl -sSL -o xen.deb \
+  "https://github.com/sci2sci-opensource/xen/releases/download/v${VERSION}/xen_${VERSION}_${ARCH}.deb"
+sudo dpkg -i xen.deb
+```
+
+### Build from source
+
+```bash
+git clone https://github.com/sci2sci-opensource/xen.git
+cd xen
+cargo install --path .
+```
+
+### Verify a download
+
+```bash
+curl -sSL https://github.com/sci2sci-opensource/xen/releases/latest/download/SHA256SUMS \
+  | shasum -a 256 -c --ignore-missing
+```
+
+The one-liner detects OS + arch, downloads the matching static binary from the corresponding GitHub Release, drops it in `~/.local/bin`. No prerequisites beyond `curl`, `tar`, and a POSIX shell. Override the version with `XEN_VERSION=v0.1.0 sh install.sh`, the install location with `XEN_INSTALL_DIR=...`.
 
 ## Quickstart
 
@@ -244,14 +282,7 @@ The stack is small: `clap` for the CLI surface, `tokio` + `tokio::process` for t
 
 The pre-design that has to happen before any code is the env keyspace as a Rust type: a single `enum` enumerating every legal key in xen's config, tagged at the type level with shared-vs-private. `env set` becomes a `match`, "refuse to write auth into shared" becomes a function signature, adding a new key category later becomes a build error at every call site that needs updating.
 
-## Building from source
-
-```sh
-git clone https://github.com/sci2sci-opensource/xen.git
-cd xen
-cargo build --release
-cargo install --path .
-```
+## CI
 
 CI matrix is Linux / macOS / Windows. `cargo test --all-features --locked` is what gets run on every PR.
 

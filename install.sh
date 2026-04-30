@@ -2,7 +2,7 @@
 # xen installer.
 #
 # Usage:
-#   curl -fsSL https://<host>/install | sh
+#   curl -fsSL https://raw.githubusercontent.com/sci2sci-opensource/xen/master/install.sh | sh
 #
 # Detects OS+arch, downloads the matching static binary from the
 # corresponding GitHub Release, and drops it in $XEN_INSTALL_DIR
